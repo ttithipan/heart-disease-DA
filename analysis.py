@@ -10,12 +10,13 @@ leaking test information:
   1. loads the Heart Failure dataset (heart.csv next to this file),
   2. CLEANS the data:
        - drops the Cholesterol column (and any cholesterol-derived fields),
+       - treats RestingBP = 0 (impossible) as missing and median-imputes it,
        - winsorizes the continuous numeric columns to their 1.5*IQR fences
-         (Age, RestingBP, MaxHR, Oldpeak). For the learned models the fences are
-         fit on the TRAINING fold only and then applied to train + test, so no
-         test statistic leaks into training. This also fixes the impossible
-         RestingBP = 0 record (clamped up to the training-fold lower fence).
-         EDA figures use cohort-level fences for a descriptive view only.
+         (Age, RestingBP, MaxHR, Oldpeak).
+     For the learned models BOTH the imputation median and the fences are fit on
+     the TRAINING fold only and then applied to that fold's train + test rows, so
+     no test statistic leaks into training. EDA figures use cohort-level medians
+     and fences for a descriptive view only.
   3. renders dataset-overview figures: class balance, disease rate by category,
      numeric distributions by outcome, and the correlation matrix,
   4. benchmarks three analytic methods under IDENTICAL stratified 5-fold CV:
@@ -58,11 +59,17 @@ RANDOM_STATE = 42
 RULE_CUTOFF = 2
 DECISION_THRESHOLD = 0.5
 
-# Cleaning: drop cholesterol, then winsorize the continuous numerics.
+# Cleaning: drop cholesterol, mark sentinel zeros as missing, then impute +
+# winsorize the continuous numerics (all fitted per training fold).
 DROP_COLUMNS = ["Cholesterol"]
 NUMERIC_COLS = ["Age", "RestingBP", "Cholesterol", "FastingBS", "MaxHR", "Oldpeak"]
 MODEL_NUMERIC_COLS = [c for c in NUMERIC_COLS if c not in DROP_COLUMNS]
-# FastingBS is binary (0/1) so IQR clamping is meaningless for it.
+# Sentinel codes that mean "missing" (physiologically impossible readings).
+MISSING_SENTINELS = {"RestingBP": 0}
+# Columns median-imputed (median fit on the training fold only).
+IMPUTE_COLUMNS = ["RestingBP"]
+# Continuous columns winsorized to 1.5*IQR fences. FastingBS is binary (0/1) so
+# IQR clamping is meaningless for it.
 CLAMP_COLUMNS = ["Age", "RestingBP", "MaxHR", "Oldpeak"]
 
 CATEGORICAL_COLS = ["Sex", "ChestPainType", "RestingECG", "ExerciseAngina", "ST_Slope"]
@@ -120,10 +127,45 @@ def clamp_with(df: pd.DataFrame, fences: dict[str, tuple[float, float, int, int]
     return out
 
 
-def descriptive_clean(base: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    """Cohort-level winsorization, for EDA/figures only (never used for scoring)."""
-    fences = cohort_fences(base, CLAMP_COLUMNS)
-    return clamp_with(base, fences), fences
+def mark_missing(
+    df: pd.DataFrame, sentinels: dict[str, int]
+) -> tuple[pd.DataFrame, int]:
+    """Turn sentinel codes (e.g. RestingBP = 0) into NaN. Returns (frame, n marked)."""
+    out = df.copy()
+    n = 0
+    for col, val in sentinels.items():
+        mask = out[col] == val
+        n += int(mask.sum())
+        out.loc[mask, col] = np.nan
+    return out, n
+
+
+def impute_train_medians(
+    X_train: pd.DataFrame, X_test: pd.DataFrame, columns: list[str]
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, float]]:
+    """Median-impute columns using TRAINING-fold medians only (leak-free)."""
+    Xtr, Xte = X_train.copy(), X_test.copy()
+    medians: dict[str, float] = {}
+    for col in columns:
+        med = float(X_train[col].median())
+        medians[col] = med
+        Xtr[col] = Xtr[col].fillna(med)
+        Xte[col] = Xte[col].fillna(med)
+    return Xtr, Xte, medians
+
+
+def descriptive_clean(
+    base: pd.DataFrame,
+) -> tuple[pd.DataFrame, dict[str, float], dict]:
+    """Cohort-level median impute + winsorization, for EDA/figures only."""
+    desc = base.copy()
+    medians: dict[str, float] = {}
+    for col in IMPUTE_COLUMNS:
+        med = float(base[col].median())
+        medians[col] = med
+        desc[col] = desc[col].fillna(med)
+    fences = cohort_fences(desc, CLAMP_COLUMNS)
+    return clamp_with(desc, fences), medians, fences
 
 
 def encode_features(base: pd.DataFrame) -> pd.DataFrame:
@@ -245,14 +287,23 @@ def _banner(k: int) -> None:
     print("=" * 82)
 
 
-def report_cleaning(dropped: list[str], fences: dict, n: int) -> None:
+def report_cleaning(
+    dropped: list[str],
+    n_missing: int,
+    medians: dict[str, float],
+    fences: dict,
+    n: int,
+) -> None:
     print("\n[0] Cleaning (leak-free)")
     print(f"  dropped columns      : {', '.join(dropped) if dropped else '(none)'}")
     print(f"  rows                 : {n}  (unchanged)")
-    print(f"  winsorized columns   : {', '.join(CLAMP_COLUMNS)}")
-    print("  fence fitting        : 1.5*IQR fit on each TRAINING fold, then applied")
-    print("                         to that fold's train + test rows (no leakage)")
-    print("  descriptive (EDA)    : cohort-level fences used for figures only")
+    sentinels = ", ".join(f"{c}={v}" for c, v in MISSING_SENTINELS.items())
+    print(f"  sentinel -> missing  : {sentinels}  ({n_missing} cell marked NaN)")
+    print(f"  median imputation    : {', '.join(IMPUTE_COLUMNS)}"
+          f"  (median fit per TRAINING fold -> train + test)")
+    print(f"  winsorized columns   : {', '.join(CLAMP_COLUMNS)}  (1.5*IQR, per training fold)")
+    print("  descriptive (EDA)    : cohort-level median + fences used for figures only")
+    print("  cohort medians (EDA) : " + ", ".join(f"{c}={m:.1f}" for c, m in medians.items()))
     print(f"  {'column':<12s} {'lower':>8s} {'upper':>8s} {'low':>6s} {'high':>6s}  <- whole-cohort reference")
     for col, (lo, hi, below, above) in fences.items():
         print(f"  {col:<12s} {lo:>8.1f} {hi:>8.1f} {below:>6d} {above:>6d}")
@@ -343,7 +394,8 @@ def report_insights(order: list[str], summaries: dict[str, pd.DataFrame]) -> Non
     print("    most of the signal is carried by a handful of clinical flags")
     print("  * tree ensembles can use interactions and graded features")
     print("    (Oldpeak, MaxHR) that the rule does not use")
-    print("  * cleaning: cholesterol dropped, numerics winsorized per training fold")
+    print("  * cleaning: cholesterol dropped; RestingBP=0 median-imputed;"
+          " numerics winsorized -- all per training fold")
     print("  * per-fold SD describes variation across these folds;")
     print("    it does not establish statistical superiority or clinical readiness")
 
@@ -603,15 +655,16 @@ def main() -> None:
         raise KeyError(f"dataset must contain a '{LABEL_COL}' label column")
 
     base, dropped = drop_cholesterol(raw)
-    desc, fences = descriptive_clean(base)          # EDA/figures only
+    base, n_missing = mark_missing(base, MISSING_SENTINELS)
+    desc, medians, fences = descriptive_clean(base)  # EDA/figures only
 
     y = base[LABEL_COL].to_numpy()
-    X = encode_features(base)                        # un-winsorized (fences per fold)
+    X = encode_features(base)                        # NaN kept; imputed per fold
     folds = make_folds(y, args.folds, args.seed)
     score = rule_score(base)
 
     _banner(args.folds)
-    report_cleaning(dropped, fences, len(base))
+    report_cleaning(dropped, n_missing, medians, fences, len(base))
     report_data(desc, X, y)
 
     print("\n  rendering dataset-overview figures")
@@ -639,9 +692,10 @@ def main() -> None:
         ("Random forest", lambda: RandomForestClassifier(random_state=args.seed), rf_imp),
     ):
         def predict(tr, te, factory=factory, store=store):
-            fences = train_fences(X.iloc[tr])              # fit on TRAIN only
-            Xtr = apply_train_fences(X.iloc[tr], fences)
-            Xte = apply_train_fences(X.iloc[te], fences)   # same fences -> no leak
+            Xtr, Xte, _ = impute_train_medians(X.iloc[tr], X.iloc[te], IMPUTE_COLUMNS)
+            fences = train_fences(Xtr)                    # fences fit on TRAIN only
+            Xtr = apply_train_fences(Xtr, fences)
+            Xte = apply_train_fences(Xte, fences)         # same fences -> no leak
             model = factory()
             model.fit(Xtr, y[tr])
             store.append(model.feature_importances_)
@@ -655,7 +709,7 @@ def main() -> None:
 
     print(f"\n[2b] Shared design: {args.folds} stratified folds, same split for all "
           f"methods, seed={args.seed}, rule cutoff={args.cutoff}")
-    print("     learned models: winsorization fitted per training fold (leak-free)")
+    print("     learned models: median-impute + winsorize fitted per training fold")
 
     pooled = {
         name: report_pooled(name, y, oofs[name], thresholds[name]) for name in summaries

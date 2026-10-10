@@ -26,15 +26,18 @@ https://www.kaggle.com/datasets/fedesoriano/heart-failure-prediction
 1. **Drop cholesterol.** `Cholesterol` (and any cholesterol-derived fields) is
    removed entirely — its impossible `0` sentinels (172 rows, 18.7%) make it an
    unreliable predictor.
-2. **Winsorize continuous numerics.** `Age`, `RestingBP`, `MaxHR`, `Oldpeak` are
-   clamped to their **1.5×IQR fences**. This also resolves the one impossible
-   `RestingBP = 0` record (clamped up to the lower fence).
-3. **Leak-free by construction.** For the learned models the fences are fit on
-   **each training fold only** and then applied to that fold's training *and*
-   test rows — no test statistic ever influences training. (EDA figures use
-   cohort-level fences for a descriptive view only; they are never used for
-   scoring. `FastingBS` is binary, so IQR clamping is meaningless for it.)
-4. **Encoding.** 5 numeric features + one-hot categoricals (`drop_first`) = **14
+2. **Mark impossible values as missing.** The one physiologically impossible
+   `RestingBP = 0` reading is converted to missing and **median-imputed**
+   (cohort median = 130 mmHg).
+3. **Winsorize continuous numerics.** `Age`, `RestingBP`, `MaxHR`, `Oldpeak` are
+   clamped to their **1.5×IQR fences**.
+4. **Leak-free by construction.** For the learned models, **both** the
+   imputation median **and** the IQR fences are fit on **each training fold
+   only**, then applied to that fold's training *and* test rows — no test
+   statistic ever influences training. (EDA figures use cohort-level
+   medians/fences for a descriptive view only; they are never used for scoring.
+   `FastingBS` is binary, so IQR clamping is meaningless for it.)
+5. **Encoding.** 5 numeric features + one-hot categoricals (`drop_first`) = **14
    encoded model inputs**.
 
 ---
@@ -57,20 +60,20 @@ seed=42)` folds. Primary metric: **MCC** (uses all four confusion-matrix cells).
 
 | Method | MCC | AUC | F1 | Accuracy | Recall | Specificity |
 |---|---|---|---|---|---|---|
-| **Random forest** | **0.723** | 0.924 | 0.878 | 0.863 | 0.894 | 0.824 |
-| Gradient boosting | 0.706 | 0.916 | 0.871 | 0.854 | 0.890 | 0.811 |
+| **Random forest** | **0.714** | 0.924 | 0.874 | 0.858 | 0.886 | 0.824 |
+| Gradient boosting | 0.706 | 0.918 | 0.870 | 0.854 | 0.884 | 0.817 |
 | Heuristic baseline | 0.697 | 0.904 | 0.865 | 0.850 | 0.868 | 0.827 |
 
 ### Pooled out-of-fold (all 918 patients)
 
 | Method | TP | FP | TN | FN | MCC |
 |---|---|---|---|---|---|
-| Random forest | 454 | 72 | 338 | 54 | 0.722 |
-| Gradient boosting | 452 | 78 | 332 | 56 | 0.704 |
+| Random forest | 450 | 72 | 338 | 58 | 0.713 |
+| Gradient boosting | 449 | 75 | 335 | 59 | 0.704 |
 | Heuristic baseline | 441 | 71 | 339 | 67 | 0.696 |
 
 Random forest has the highest mean MCC and catches the most disease cases
-(454 vs 441 for the rule); the 4-marker rule stays within ~0.03 MCC of the full
+(450 vs 441 for the rule); the 4-marker rule stays within ~0.02 MCC of the full
 ensembles. These are **descriptive, dataset-specific** comparisons — five folds
 alone do not establish statistical or clinical superiority.
 
@@ -110,11 +113,13 @@ Requires: `pandas`, `numpy`, `scikit-learn`, `matplotlib`, `seaborn`.
 
 ## Notes & limitations
 
-- **Leak-free winsorization** is the key methodological choice here: fences are
-  train-fold only. (An earlier draft clamped the whole cohort; results shifted
-  slightly — RF 0.725 → 0.723, GB 0.699 → 0.706.)
-- Winsorization barely changes the tree models because they split on thresholds
-  and are relatively robust to extreme values.
+- **Leak-free imputation + winsorization** is the key methodological choice
+  here: both the missing-value median and the IQR fences are fit on training
+  folds only. (Earlier drafts that processed the whole cohort, or merely clamped
+  the impossible zero, shifted results slightly — RF MCC 0.723 → **0.714**, GB
+  0.706 unchanged.)
+- Imputing/winsorizing barely changes the tree models because they split on
+  thresholds and are relatively robust to extreme values.
 - The `ClinicalRiskScore` rule is a project-defined heuristic, **not** a
   validated clinical score. Results are internal cross-validation only and are
   not evidence of clinical readiness.

@@ -6,13 +6,14 @@
 [0] Cleaning (leak-free)
   dropped columns      : Cholesterol
   rows                 : 918  (unchanged)
-  winsorized columns   : Age, RestingBP, MaxHR, Oldpeak
-  fence fitting        : 1.5*IQR fit on each TRAINING fold, then applied
-                         to that fold's train + test rows (no leakage)
-  descriptive (EDA)    : cohort-level fences used for figures only
+  sentinel -> missing  : RestingBP=0  (1 cell marked NaN)
+  median imputation    : RestingBP  (median fit per TRAINING fold -> train + test)
+  winsorized columns   : Age, RestingBP, MaxHR, Oldpeak  (1.5*IQR, per training fold)
+  descriptive (EDA)    : cohort-level median + fences used for figures only
+  cohort medians (EDA) : RestingBP=130.0
   column          lower    upper    low   high  <- whole-cohort reference
   Age              27.5     79.5      0      0
-  RestingBP        90.0    170.0      2     26
+  RestingBP        90.0    170.0      1     26
   MaxHR            66.0    210.0      2      0
   Oldpeak          -2.2      3.8      1     15
 
@@ -58,64 +59,64 @@
 [2] Gradient boosting
   fold    accuracy   precision      recall specificity          f1         auc         mcc
   -----------------------------------------------------------------------------------------
-     1       0.918       0.931       0.922       0.915       0.926       0.954       0.835
-     2       0.848       0.885       0.833       0.866       0.859       0.917       0.696
-     3       0.810       0.807       0.863       0.744       0.834       0.873       0.614
+     1       0.908       0.938       0.892       0.927       0.915       0.955       0.815
+     2       0.848       0.878       0.843       0.854       0.860       0.920       0.694
+     3       0.810       0.813       0.853       0.756       0.833       0.878       0.614
      4       0.858       0.838       0.921       0.780       0.877       0.927       0.714
-     5       0.836       0.814       0.911       0.744       0.860       0.908       0.670
+     5       0.847       0.829       0.911       0.768       0.868       0.910       0.691
   -----------------------------------------------------------------------------------------
-  mean       0.854       0.855       0.890       0.810       0.871       0.916       0.706
-    sd       0.040       0.052       0.040       0.077       0.034       0.030       0.082
+  mean       0.854       0.859       0.884       0.817       0.870       0.918       0.706
+    sd       0.035       0.050       0.035       0.072       0.030       0.028       0.072
 
 [2] Random forest
   fold    accuracy   precision      recall specificity          f1         auc         mcc
   -----------------------------------------------------------------------------------------
-     1       0.908       0.938       0.892       0.927       0.915       0.961       0.815
-     2       0.859       0.873       0.873       0.841       0.873       0.936       0.714
-     3       0.826       0.830       0.863       0.780       0.846       0.882       0.647
+     1       0.908       0.938       0.892       0.927       0.915       0.957       0.815
+     2       0.859       0.880       0.863       0.854       0.871       0.935       0.715
+     3       0.821       0.822       0.863       0.768       0.842       0.881       0.636
      4       0.869       0.853       0.921       0.805       0.886       0.948       0.735
-     5       0.852       0.830       0.921       0.768       0.873       0.894       0.703
+     5       0.836       0.826       0.891       0.768       0.857       0.899       0.668
   -----------------------------------------------------------------------------------------
-  mean       0.863       0.865       0.894       0.824       0.878       0.924       0.723
-    sd       0.030       0.045       0.027       0.064       0.025       0.035       0.061
+  mean       0.858       0.864       0.886       0.824       0.874       0.924       0.714
+    sd       0.033       0.048       0.024       0.067       0.028       0.033       0.069
 
 [2b] Shared design: 5 stratified folds, same split for all methods, seed=42, rule cutoff=2
-     learned models: winsorization fitted per training fold (leak-free)
+     learned models: median-impute + winsorize fitted per training fold
 
 [3] Heuristic baseline -- pooled out-of-fold (918 patients)
   confusion: TP=441  FP=71  TN=339  FN=67
   accuracy=0.850  precision=0.861  recall=0.868  specificity=0.827  f1=0.865  auc=0.903  mcc=0.696
 
 [3] Gradient boosting -- pooled out-of-fold (918 patients)
-  confusion: TP=452  FP=78  TN=332  FN=56
-  accuracy=0.854  precision=0.853  recall=0.890  specificity=0.810  f1=0.871  auc=0.914  mcc=0.704
+  confusion: TP=449  FP=75  TN=335  FN=59
+  accuracy=0.854  precision=0.857  recall=0.884  specificity=0.817  f1=0.870  auc=0.916  mcc=0.704
 
 [3] Random forest -- pooled out-of-fold (918 patients)
-  confusion: TP=454  FP=72  TN=338  FN=54
-  accuracy=0.863  precision=0.863  recall=0.894  specificity=0.824  f1=0.878  auc=0.922  mcc=0.722
+  confusion: TP=450  FP=72  TN=338  FN=58
+  accuracy=0.858  precision=0.862  recall=0.886  specificity=0.824  f1=0.874  auc=0.922  mcc=0.713
 
 [4] Ranking (mean over folds)
   method                          MCC      AUC       F1      acc   recall
   --------------------------------------------------------------------
-  1. Random forest             0.723    0.924    0.878    0.863    0.894
-  2. Gradient boosting         0.706    0.916    0.871    0.854    0.890
+  1. Random forest             0.714    0.924    0.874    0.858    0.886
+  2. Gradient boosting         0.706    0.918    0.870    0.854    0.884
   3. Heuristic baseline        0.697    0.904    0.865    0.850    0.868
 
 [5] What matters -- top 12 features by model importance
   feature                   grad boosting  random forest
   ------------------------------------------------------
-  ST_Slope_Up                       0.456          0.153
-  Oldpeak                           0.101          0.117
-  MaxHR                             0.095          0.135
-  ExerciseAngina_Y                  0.057          0.089
-  Sex_M                             0.056          0.045
+  ST_Slope_Up                       0.457          0.152
+  Oldpeak                           0.102          0.117
+  MaxHR                             0.093          0.135
+  ExerciseAngina_Y                  0.056          0.090
+  Sex_M                             0.056          0.044
   RestingBP                         0.048          0.089
-  Age                               0.044          0.104
+  Age                               0.045          0.105
   ChestPainType_NAP                 0.042          0.031
   FastingBS                         0.035          0.035
-  ChestPainType_ATA                 0.031          0.044
+  ChestPainType_ATA                 0.032          0.044
   ST_Slope_Flat                     0.017          0.115
-  ChestPainType_TA                  0.012          0.012
+  ChestPainType_TA                  0.011          0.012
 
   Heuristic baseline markers -- disease rate among carriers
   marker                         carry  P(disease|yes)    swing
@@ -133,12 +134,12 @@
   saved figure -> /Users/bento/Documents/vault/bachelors/data-analytics/final_for_sure/figures/final_bench_importance.png
 
 [6] Insights
-  * best method by MCC: Random forest (MCC 0.723, AUC 0.924)
+  * best method by MCC: Random forest (MCC 0.714, AUC 0.924)
   * the rule uses only 4 columns yet tracks the ensembles closely ->
     most of the signal is carried by a handful of clinical flags
   * tree ensembles can use interactions and graded features
     (Oldpeak, MaxHR) that the rule does not use
-  * cleaning: cholesterol dropped, numerics winsorized per training fold
+  * cleaning: cholesterol dropped; RestingBP=0 median-imputed; numerics winsorized -- all per training fold
   * per-fold SD describes variation across these folds;
     it does not establish statistical superiority or clinical readiness
 
