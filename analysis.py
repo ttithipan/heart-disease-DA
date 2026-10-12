@@ -76,6 +76,11 @@ CATEGORICAL_COLS = ["Sex", "ChestPainType", "RestingECG", "ExerciseAngina", "ST_
 # derived columns (mirrors features.py, minus the cholesterol-derived fields)
 ENGINEERED_COLS = ["MaxHR_pct", "ST_Score", "ExAngina_ST", "ClinicalRiskScore"]
 
+# Plot grouping: FastingBS is binary, so display it with the categorical features
+# and keep it out of the continuous panel. (Model inputs are unchanged.)
+CATEGORICAL_PLOT_COLS = CATEGORICAL_COLS + ["FastingBS"]
+NUMERIC_PLOT_COLS = [c for c in MODEL_NUMERIC_COLS if c not in CATEGORICAL_PLOT_COLS]
+
 RULE_METHOD_NAME = "Heuristic baseline"
 
 METRIC_ORDER = ["accuracy", "precision", "recall", "specificity", "f1", "auc", "mcc"]
@@ -439,7 +444,7 @@ def fig_class_balance(desc: pd.DataFrame) -> None:
                 ha="center", va="bottom", fontsize=10)
     ax.set_ylim(0, counts.max() * 1.25)
     ax.set_ylabel("patients")
-    ax.set_title("Target distribution: presence of heart disease")
+    ax.set_title("Target distribution")
     fig.tight_layout()
     _save(fig, "final_eda1_class_balance.png")
 
@@ -448,7 +453,7 @@ def fig_category_rates(desc: pd.DataFrame) -> None:
     plt, _ = _setup_style()
     overall = desc[LABEL_COL].mean() * 100
     fig, axes = plt.subplots(2, 3, figsize=(14, 8.5))
-    for ax, col in zip(axes.ravel(), CATEGORICAL_COLS):
+    for ax, col in zip(axes.ravel(), CATEGORICAL_PLOT_COLS):
         agg = (desc.groupby(col, observed=True)[LABEL_COL]
                .agg(["mean", "count"]).sort_values("mean"))
         agg["mean"] *= 100
@@ -459,7 +464,7 @@ def fig_category_rates(desc: pd.DataFrame) -> None:
             ax.text(v + 1.5, y, f"{v:.0f}%", va="center", fontsize=8.5)
         ax.set_xlim(0, 105)
         ax.set_title(col, fontsize=11)
-    fig.suptitle(f"Heart disease rate by category (average = {overall:.0f}%)", fontsize=13)
+    fig.suptitle("Heart disease rate by category", fontsize=13)
     fig.tight_layout()
     _save(fig, "final_eda2_category_rates.png")
 
@@ -470,10 +475,9 @@ def fig_numeric_by_outcome(desc: pd.DataFrame) -> None:
     order = ["No disease", "Heart disease"]
     palette = {"No disease": "#4C72B0", "Heart disease": "#C44E52"}
 
-    cols = MODEL_NUMERIC_COLS  # 5 numeric features (cholesterol dropped)
-    fig, axes = plt.subplots(2, 3, figsize=(14, 8))
-    flat = axes.ravel()
-    for ax, col in zip(flat, cols):
+    cols = NUMERIC_PLOT_COLS  # Age, RestingBP, MaxHR, Oldpeak (FastingBS is categorical)
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+    for ax, col in zip(axes.ravel(), cols):
         sns.violinplot(data=plot_df, x="Outcome", y=col, hue="Outcome",
                        order=order, hue_order=order, palette=palette,
                        alpha=0.35, inner=None, cut=0, legend=False, ax=ax)
@@ -482,9 +486,7 @@ def fig_numeric_by_outcome(desc: pd.DataFrame) -> None:
                     width=0.16, showfliers=False, legend=False, ax=ax)
         ax.set_title(col, fontsize=11)
         ax.set_xlabel("")
-    for ax in flat[len(cols):]:
-        ax.axis("off")
-    fig.suptitle("Continuous features vs outcome (descriptive cleaning)", fontsize=13)
+    fig.suptitle("Continuous features vs Heart disease", fontsize=13)
     fig.tight_layout()
     _save(fig, "final_eda3_numeric_by_outcome.png")
 
@@ -501,7 +503,7 @@ def fig_correlation_matrix(desc: pd.DataFrame) -> None:
                 vmin=-1, vmax=1, square=True, linewidths=0.5,
                 cbar_kws={"shrink": 0.75, "label": "Pearson correlation"},
                 annot_kws={"fontsize": 7.5}, ax=ax)
-    ax.set_title("Correlation matrix -- cleaned features vs target", fontsize=12)
+    ax.set_title("Correlation matrix", fontsize=12)
     ax.tick_params(axis="x", labelsize=8.5, rotation=90)
     ax.tick_params(axis="y", labelsize=8.5)
     fig.tight_layout()
@@ -527,7 +529,7 @@ def fig_metric_bars(summaries: dict[str, pd.DataFrame], k: int) -> None:
     ax.set_xticklabels([m.upper() for m in metrics])
     ax.set_ylim(0, 1.05)
     ax.set_ylabel("score")
-    ax.set_title(f"Metric comparison, stratified {k}-fold CV (mean +/- SD over folds)")
+    ax.set_title(f"Metrics by method ({k}-fold CV)")
     ax.legend(loc="lower right", frameon=True)
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
@@ -554,7 +556,7 @@ def fig_boxplots(summaries: dict[str, pd.DataFrame], k: int) -> None:
         ax.set_title(f"{metric.upper()} per fold (k={k})", fontsize=11)
         ax.grid(axis="y", alpha=0.3)
         ax.set_ylim(0.4, 1.0)
-    fig.suptitle("Per-fold stability across the same folds", fontsize=12)
+    fig.suptitle("Per-fold stability", fontsize=12)
     fig.tight_layout()
     _save(fig, "final_bench_boxplots.png")
 
@@ -572,7 +574,7 @@ def fig_roc(oof: dict[str, np.ndarray], y: np.ndarray) -> None:
                 markersize=5, label=f"{name} (AUC {auc:.3f})")
     ax.set_xlabel("False positive rate (1 - specificity)")
     ax.set_ylabel("True positive rate (recall)")
-    ax.set_title("ROC curves, pooled out-of-fold predictions")
+    ax.set_title("ROC curves (out-of-fold)")
     ax.legend(loc="lower right", fontsize=9, frameon=True)
     ax.grid(alpha=0.25)
     fig.tight_layout()
@@ -593,7 +595,7 @@ def fig_confusion(pooled: dict[str, dict]) -> None:
         ax.set_xticks([0, 1]); ax.set_xticklabels(["pred healthy", "pred disease"])
         ax.set_yticks([0, 1]); ax.set_yticklabels(["true healthy", "true disease"])
         ax.set_title(f"{name}\nMCC {m['mcc']:.3f}  acc {m['accuracy']:.3f}", fontsize=10)
-    fig.suptitle("Pooled out-of-fold confusion matrices", fontsize=12)
+    fig.suptitle("Confusion matrices (out-of-fold)", fontsize=12)
     fig.tight_layout()
     _save(fig, "final_bench_confusion.png")
 
@@ -630,7 +632,7 @@ def fig_importance(gb_imp: pd.Series, rf_imp: pd.Series, desc: pd.DataFrame) -> 
     ax.set_xlim(0, 75)
     ax.tick_params(axis="y", labelsize=8.5)
 
-    fig.suptitle("What matters: learned importances vs hand-picked markers", fontsize=13)
+    fig.suptitle("Feature importance vs rule markers", fontsize=13)
     fig.tight_layout()
     _save(fig, "final_bench_importance.png")
 
