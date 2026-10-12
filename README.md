@@ -96,6 +96,7 @@ Generated into `figures/`:
 | `final_bench_roc.png` | pooled out-of-fold ROC curves |
 | `final_bench_confusion.png` | pooled confusion matrices |
 | `final_bench_importance.png` | learned importances vs rule markers |
+| `final_rule_cutoff_f1.png` | F1 (and MCC) vs rule cutoff — why `≥ 2` |
 
 ---
 

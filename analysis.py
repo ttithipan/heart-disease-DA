@@ -637,6 +637,39 @@ def fig_importance(gb_imp: pd.Series, rf_imp: pd.Series, desc: pd.DataFrame) -> 
     _save(fig, "final_bench_importance.png")
 
 
+def fig_cutoff_sweep(y: np.ndarray, score: np.ndarray) -> None:
+    """F1 (primary) and MCC (secondary) as a function of the rule cutoff k."""
+    plt, _ = _setup_style()
+    ks = list(range(0, 6))
+    f1s, mccs = [], []
+    for k in ks:
+        m = metric_bundle(y, score, float(k))
+        f1s.append(m["f1"])
+        mccs.append(m["mcc"])
+
+    fig, ax = plt.subplots(figsize=(7.6, 4.9))
+    ax.plot(ks, f1s, "-o", color="#55A868", linewidth=2.3, markersize=7, label="F1")
+    ax.plot(ks, mccs, "--o", color="#4C72B0", linewidth=1.7, markersize=5,
+            alpha=0.85, label="MCC")
+
+    best = max(ks, key=lambda k: f1s[k])
+    ax.scatter([best], [f1s[best]], s=170, facecolors="none", edgecolors="#C44E52",
+               linewidths=2.2, zorder=5)
+    ax.annotate(f"best F1 = {f1s[best]:.3f}\ncutoff = {best}",
+                (best, f1s[best]), textcoords="offset points", xytext=(10, 12),
+                fontsize=9, color="#C44E52")
+
+    ax.set_xticks(ks)
+    ax.set_xlabel("cutoff k   (predict 'at risk' when ClinicalRiskScore ≥ k)")
+    ax.set_ylabel("score")
+    ax.set_ylim(0, 1.0)
+    ax.set_title("F1 vs cutoff", fontsize=13)
+    ax.grid(alpha=0.3)
+    ax.legend(loc="lower center", frameon=True)
+    fig.tight_layout()
+    _save(fig, "final_rule_cutoff_f1.png")
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -728,6 +761,7 @@ def main() -> None:
     fig_roc(oofs, y)
     fig_confusion(pooled)
     fig_importance(gb_series, rf_series, desc)
+    fig_cutoff_sweep(y, score)
 
     report_insights(order, summaries)
 
